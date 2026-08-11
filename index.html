@@ -74,14 +74,15 @@ main{padding:20px 24px 40px;max-width:1680px;margin:0 auto}
 .tok:hover{transform:translate(-50%,-50%) scale(1.07)}
 .shirt{
   width:46px;height:46px;margin:0 auto;border-radius:50%;
-  background:var(--bg-elev);border:2px solid transparent;
+  background:var(--bg-elev);color:var(--t2);
   display:grid;place-items:center;font-weight:800;font-size:16px;
-  box-shadow:0 6px 18px rgba(0,0,0,.45);position:relative;
+  box-shadow:0 6px 18px rgba(0,0,0,.45);position:relative;transition:background .3s,color .3s;
 }
+/* Alert carries a ring as well as red — state must never be colour-only. */
+.shirt.crit{box-shadow:0 0 0 3px rgba(255,255,255,.92),0 6px 18px rgba(0,0,0,.45)}
 .tok .nm{font-size:11.5px;font-weight:700;margin-top:6px;text-shadow:0 2px 6px #000;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tok .sc{font-size:11px;font-weight:700;color:var(--t2);text-shadow:0 2px 6px #000}
-.tok .bang{position:absolute;top:-4px;right:14px;font-size:13px;color:var(--crit)}
 
 /* ---------- squad table ---------- */
 table{width:100%;border-collapse:collapse;font-size:13px}
@@ -112,6 +113,9 @@ tbody tr:hover{background:rgba(255,255,255,.035)}
 .tally div{background:var(--bg-elev);border-radius:12px;padding:10px 4px}
 .tally b{display:block;font-size:22px;font-weight:800;line-height:1.15}
 .tally span{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);font-weight:700}
+/* One dot per player, so the three counts visibly partition the XI. */
+#tallyDots{margin-top:11px;justify-content:space-between}
+#tallyDots .dot{width:12px;height:12px}
 
 /* ---------- detail ---------- */
 .back{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:700;color:var(--t2);
@@ -177,8 +181,7 @@ tbody tr:hover{background:rgba(255,255,255,.035)}
     <span class="dot" style="background:var(--warn);flex:none"></span><span data-i18n="simBadge"></span>
   </span>
   <span class="pill"><span id="monPill"></span></span>
-  <button class="btn primary" id="startBtn" data-i18n="start"></button>
-  <button class="btn hidden" id="resetBtn" data-i18n="reset"></button>
+  <button class="btn" id="resetBtn" data-i18n="reset"></button>
   <div class="seg" id="langSeg">
     <button data-lang="en" class="on">EN</button><button data-lang="zh">中文</button>
   </div>
@@ -237,6 +240,7 @@ tbody tr:hover{background:rgba(255,255,255,.035)}
             <div><b id="tallyWarn" style="color:var(--warn)">–</b><span data-i18n="watch"></span></div>
             <div><b id="tallyCrit" style="color:var(--crit)">–</b><span data-i18n="alert"></span></div>
           </div>
+          <div class="dotrow" id="tallyDots"></div>
         </div>
 
         <div class="card">
@@ -339,7 +343,7 @@ const STR = {
     simFull:"Simulated training session — demonstration data. No hardware, no network, no live patient or athlete readings.",
     footerCo:"BioFab Innovations Ltd · Cambridge, UK",
     footerTag:"Measure biosignals, make them computable.",
-    monitored:n=>`${n} patches monitored`, start:"Start Live Session", reset:"Reset",
+    monitored:n=>`${n} patches monitored`, reset:"Restart session",
     tabPitch:"Formation", tabSquad:"Squad",
     colName:"Player", colPos:"Position", colScore:"Recovery", colPanel:"Panel", colHr:"HR",
     colStatus:"Status",
@@ -370,7 +374,7 @@ const STR = {
     simFull:"模拟训练课——演示数据。无硬件、无网络，非真实患者或运动员读数。",
     footerCo:"BioFab Innovations Ltd · 英国剑桥",
     footerTag:"测量生物信号，让它可被计算。",
-    monitored:n=>`${n} 个贴片在测`, start:"开始实时监测", reset:"重置",
+    monitored:n=>`${n} 个贴片在测`, reset:"重新开始",
     tabPitch:"阵型", tabSquad:"球员列表",
     colName:"球员", colPos:"位置", colScore:"恢复度", colPanel:"标志物", colHr:"心率",
     colStatus:"状态",
@@ -577,7 +581,6 @@ const engine = {
 };
 
 function connect(s){ if(s.phase!=="idle") return; s.phase="connecting"; s.deadline=s.clock+3; }
-function goLive(s){ if(s.phase!=="idle") return; s.phase="live"; }
 
 function applyEvent(s, ev){
   if(s.phase!=="live") return;
@@ -594,7 +597,12 @@ function tick(s){
     return;
   }
   if(s.phase==="baselining"){
-    if(s.clock>=s.deadline){ s.phase="live"; s.deadline=null; } else return;
+    if(s.clock>=s.deadline){
+      s.phase="live"; s.deadline=null;
+      // Everyone but the athlete on screen picks up ambient training load, so the
+      // squad view is populated the moment the patches come online.
+      if(s.athlete.id!==engine.focus) applyEvent(s, EVENTS[0]);
+    } else return;
   }
   for(const k of ALL) stepKinetics(s.kin[k], dt, s.rng);
 
@@ -624,14 +632,12 @@ function tick(s){
 
 function startSession(focusId){
   engine.focus = focusId; engine.running = true;
-  connect(S[focusId]);
-  S.forEach(s => { if(s.athlete.id!==focusId) goLive(s); });
-  // Give the rest of the squad ambient training load shortly after going live.
-  setTimeout(() => S.forEach(s => { if(s.athlete.id!==focusId) applyEvent(s, EVENTS[0]); }), 1500);
+  S.forEach(connect);
   if(!engine.timer) engine.timer = setInterval(loop, TICK);
   render();
 }
 
+// The session is always live — reset means start it over, not stop it.
 function resetAll(){
   clearInterval(engine.timer); engine.timer=null;
   engine.running=false; engine.autoplay=false; engine.activeAlert=null;
@@ -642,14 +648,13 @@ function resetAll(){
     s.latest={}; s.score=100; s.contributions=[]; s.alerts=[]; s.lastSeverity={};
   });
   document.getElementById("alertModal").classList.add("hidden");
-  render();
+  startSession(engine.focus);
 }
 
 // Scripted beats, paced for an unattended run (matches SimulationEngine.startAutoPlay).
 const SCRIPT = [[2,0],[12,1],[22,2],[32,3],[62,4]];
 function toggleAutoplay(){
   if(engine.autoplay){ engine.autoplay=false; return; }
-  if(!engine.running) startSession(engine.focus);
   engine.autoplay=true; engine.autoStart=Date.now(); engine.autoStep=0;
 }
 
@@ -668,6 +673,11 @@ function loop(){
 
 const worst = s => PANEL.reduce((w,k)=>{
   const st=statusOf(k,s.latest[k]); return RANK[st]>RANK[w]?st:w; },"normal");
+
+// One state per athlete: the worse of "a marker is out of range" and "readiness
+// has dropped". The tally, the pitch circle and the squad tag all read this one,
+// so the three counts always partition the XI the same way the pitch shows it.
+const state = s => { const w = worst(s), b = band(s.score).st; return RANK[w]>=RANK[b] ? w : b; };
 
 // "live" is not the same as "has data": between going live and the first frame,
 // score is still its 100 initialiser. Showing that as "Ready" invents a reading.
@@ -778,8 +788,7 @@ function buildStatic(){
     const t = el("div","tok");
     t.style.left = a.x+"%"; t.style.top = a.y+"%";
     t.innerHTML = `<div class="shirt">${a.num}</div>
-      <div class="nm">${pName(a)}</div><div class="sc"></div>
-      <span class="bang hidden">▲</span>`;
+      <div class="nm">${pName(a)}</div><div class="sc"></div>`;
     t.onclick = () => openDetail(a.id);
     t.dataset.pid = a.id;
     $("pitchWrap").appendChild(t);
@@ -830,27 +839,29 @@ function buildStatic(){
 }
 
 function render(){
-  $("startBtn").classList.toggle("hidden", engine.running);
-  $("resetBtn").classList.toggle("hidden", !engine.running);
   $("autoBtn").querySelector("b").textContent =
     T().autoTitle + (engine.autoplay ? " ⏹" : "");
 
   const tally = {normal:0,warning:0,critical:0};
-  S.filter(streaming).forEach(s => tally[worst(s)]++);
+  S.filter(streaming).forEach(s => tally[state(s)]++);
   $("tallyOk").textContent = tally.normal;
   $("tallyWarn").textContent = tally.warning;
   $("tallyCrit").textContent = tally.critical;
+  $("tallyDots").innerHTML = S.map(s =>
+    `<span class="dot" title="${pName(s.athlete)}"
+       style="background:${streaming(s) ? SC[state(s)] : ""}"></span>`).join("");
 
-  // ---- pitch tokens
+  // ---- pitch tokens: the circle itself is the state — green ready, amber watch,
+  // red (plus a ring) alert. The shirt number stays inside it for identity.
   $("pitchWrap").querySelectorAll(".tok").forEach(t => {
-    const s = S[+t.dataset.pid], w = worst(s), b = band(s.score), on = streaming(s);
-    // One ring, one meaning: the worse of "a marker is out of range" and
-    // "readiness has dropped". Two concentric rings read as noise from a distance.
-    const shirtSt = RANK[w] >= RANK[b.st] ? w : b.st;
-    t.querySelector(".shirt").style.borderColor = on ? SC[shirtSt] : "transparent";
+    const s = S[+t.dataset.pid], st = state(s), b = band(s.score), on = streaming(s);
+    const shirt = t.querySelector(".shirt");
+    shirt.style.background = on ? SC[st] : "";
+    shirt.style.color = on ? "#08121a" : "";
+    shirt.classList.toggle("crit", on && st==="critical");
+    // Readiness stays neutral here: the circle is the state signal, and a green
+    // score under an amber circle just reads as a contradiction from a distance.
     t.querySelector(".sc").textContent = on ? s.score : "";
-    t.querySelector(".sc").style.color = on ? SC[b.st] : "";
-    t.querySelector(".bang").classList.toggle("hidden", w!=="critical");
   });
 
   // ---- squad table
@@ -865,8 +876,10 @@ function render(){
       d.style.background = st==="normal" ? "rgba(255,255,255,.12)" : SC[st];
     });
     tr.querySelector(".hr").textContent = on ? fmt("heartRate",s.latest.heartRate) : "—";
-    const tag = tr.querySelector(".tag"), st = w==="normal" ? b.st : w;
-    tag.textContent = on ? (w==="normal" ? T().bands[b.key] : T().statuses[w]) : "–";
+    // The word follows whichever of the two drove the colour, so they never disagree.
+    const tag = tr.querySelector(".tag"), st = state(s);
+    tag.textContent = on ? (st!=="normal" && RANK[w]>=RANK[b.st] ? T().statuses[w]
+                                                                : T().bands[b.key]) : "–";
     tag.style.color = on ? SC[st] : "var(--t3)";
     tag.style.background = on ? `color-mix(in srgb, ${SC[st]} 18%, transparent)` : "transparent";
   });
@@ -963,8 +976,7 @@ function showAlert(a){
    ============================================================ */
 function openDetail(id){
   engine.focus = id; engine.route = "detail";
-  if(!engine.running) startSession(id);
-  else if(S[id].phase==="idle") connect(S[id]);
+  if(S[id].phase==="idle") connect(S[id]);
   $("squadView").classList.add("hidden");
   $("detailView").classList.remove("hidden");
   window.scrollTo(0,0);
@@ -977,7 +989,6 @@ function openSquad(){
   render();
 }
 
-$("startBtn").onclick = () => startSession(engine.focus);
 $("resetBtn").onclick = resetAll;
 $("backBtn").onclick = openSquad;
 $("autoBtn").onclick = toggleAutoplay;
@@ -1001,14 +1012,14 @@ document.addEventListener("keydown", e => {
   const k = e.key.toLowerCase();
   if(k==="escape"){ engine.activeAlert=null; $("alertModal").classList.add("hidden");
                     if(engine.route==="detail") openSquad(); return; }
-  if(k===" "){ e.preventDefault(); engine.running ? resetAll() : startSession(engine.focus); return; }
+  if(k===" "){ e.preventDefault(); resetAll(); return; }
   if(k==="a"){ toggleAutoplay(); return; }
   const ev = EVENTS.find(v => v.key.toLowerCase()===k);
   if(ev){ e.preventDefault(); applyEvent(S[engine.focus], ev); render(); }
 });
 
 buildStatic();
-render();
+startSession(0);      // the session is live the moment the page opens
 </script>
 </body>
 </html>
